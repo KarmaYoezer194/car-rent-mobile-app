@@ -1,0 +1,295 @@
+rules_version = '2';
+
+// Baseline rules — grown feature-by-feature as each phase lands (Section 26).
+// Phases 2-4 need `users`, `cars`, and `favorites` (the `cars` rules below
+// already cover Phase 4's create/edit/delete-your-own-listing writes, not
+// just Phase 3's read); Phase 5 adds `bookings`, Phase 6 extends its status
+// transitions (confirmed->active->completed), Phase 7 adds live location (now `bookingLocations`, latest-only),
+// Phase 8 adds `reviews` plus the rating-bump carve-outs on `cars`/`users`
+// below. notifications get their own scoped rules in Phase 9, with a full
+// security pass in Phase 10. Everything not explicitly allowed below is
+// denied by the catch-all at the bottom.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function bookingDoc(bookingId) {
+      return get(/databases/$(database)/documents/bookings/$(bookingId)).data;
+    }
+
+    // Phase 8: lets a review bump exactly one `rating`+`reviewCount`
+    // aggregate step on the `cars`/`users` doc being reviewed, without
+    // handing the reviewer general write access to that document. This
+    // can't fully verify the average math (Firestore rules have no way to
+    // see the review being written in the same transaction and cross-check
+    // it), so it's a scoped trust boundary, not a proof — same accepted
+    // trade-off as BookingService.createBooking's overlap check being
+    // read-then-write instead of a transaction. Documented in README.
+    // `before.get(..., 0)` rather than `before.reviewCount`: docs created
+    // before these fields existed (or seeded by hand) have no
+    // `reviewCount`, and a missing-field access makes the rule error out —
+    // i.e. deny — which blocked reviewing those cars entirely. The client
+    // (ReviewService._bumpRatingAggregate) already treats missing as 0.
+    function isRatingBump(before, after) {
+      return after.diff(before).affectedKeys().hasOnly(['rating', 'reviewCount']) &&
+        after.reviewCount == before.get('reviewCount', 0) + 1 &&
+        after.rating >= 0 && after.rating <= 5;
+    }
+
+    // Phase 10 security pass: neither a new document nor a "this is my own
+    // doc" self-edit may touch `rating`/`reviewCount` — those two fields
+    // may ONLY move through `isRatingBump`. Without this, an owner could
+    // directly overwrite their own car's or their own profile's rating
+    // (self-edit has no field lock otherwise) or publish a brand-new
+    // listing/account already showing a fake 5-star history.
+    function startsWithNoRating(data) {
+      return data.rating == 0 && data.reviewCount == 0;
+    }
+    function doesNotTouchRating(before, after) {
+      return !after.diff(before).affectedKeys().hasAny(['rating', 'reviewCount']);    }
+
+    // Any signed-in user can read profiles (needed to show an owner's name/
+    // rating on a car listing later) but can only create their own document
+    // (starting unrated) and update it (without touching the rating
+    // aggregate directly) or bump that aggregate via a review (see
+    // `isRatingBump`); never delete it via the client.
+    match /users/{userId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.auth.uid == userId &&
+        startsWithNoRating(request.resource.data);
+      allow update: if request.auth != null &&
+        ((request.auth.uid == userId && doesNotTouchRating(resource.data, request.resource.data)) ||
+          isRatingBump(resource.data, request.resource.data));
+      allow delete: if false;
+    }
+
+    // Optional VIN fields on a listing: `vin` is '' or up to 17 characters,
+    // `vinVerified` a bool. Absent is fine (listings created before the VIN
+    // feature). Rules can't re-run the vPIC decode — there's no backend —
+    // so `vinVerified` is a client-set trust signal; only its type is
+    // enforced here (see README).
+    function validVinFields(data) {
+      return (!('vin' in data) || (data.vin is string && data.vin.size() <= 17)) &&
+        (!('vinVerified' in data) || data.vinVerified is bool);
+    }
+
+    // Any signed-in user can browse listings; only the owner can create
+    // (starting unrated, and must claim ownership as themselves, not
+    // someone else) or modify/delete their own car (without touching the
+    // rating aggregate directly) — a review bumping that aggregate (see
+    // `isRatingBump`) is the only other allowed update, and any signed-in
+    // user may do that one.
+    match /cars/{carId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.auth.uid == request.resource.data.ownerId &&
+        startsWithNoRating(request.resource.data) && validVinFields(request.resource.data);
+      allow update: if request.auth != null && validVinFields(request.resource.data) &&
+        ((request.auth.uid == resource.data.ownerId && doesNotTouchRating(resource.data, request.resource.data)) ||
+          isRatingBump(resource.data, request.resource.data));
+      allow delete: if request.auth != null && request.auth.uid == resource.data.ownerId;
+    }
+
+    // One favorites document per user (Section 24: `favorites/{userId}`),
+    // readable/writable only by that user.
+    match /favorites/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Any signed-in user can read a booking — same openness as `cars`/
+    // `users`/`reviews` above. This has to be broader than "only the two
+    // parties to it": BookingService.createBooking's overlap check queries
+    // `bookings` by carId+status across ALL renters to see whether a car is
+    // free for a date range, and Firestore validates a *list* query against
+    // this rule structurally (by its filters), not per resulting document —
+    // a rule referencing renterId/ownerId, fields that query doesn't filter
+    // on, would make Firestore reject that entire query as unprovable and
+    // every booking attempt would fail with permission-denied, regardless
+    // of what the results actually contained. Creating one still requires
+    // being signed in as the renter named on it, for a real car whose
+    // stored ownerId matches the ownerId being claimed (so a renter can't
+    // fabricate who they're booking with).
+    //
+    // Every update must touch `status` only — carId/dates/price/parties are
+    // immutable after creation (Section 26: no changing booking ownership),
+    // and only these exact transitions are allowed:
+    //   owner:  pending          -> confirmed | rejected  (accept/reject)
+    //   owner:  confirmed        -> active                (Phase 6: rental starts)
+    //   renter: active           -> return_requested       (handover: renter marks it returned)
+    //   owner:  active           -> completed               (Phase 6: confirm return directly)
+    //   owner:  return_requested -> completed               (confirm return after handover)
+    //   renter: pending | confirmed -> cancelled     (Section 12's two cancel paths)
+    //
+    // Separately, either party may flip their own `hiddenForRenter`/
+    // `hiddenForOwner` flag (and only that flag) once the booking is
+    // settled (cancelled/rejected/completed) — the swipe-to-delete on the
+    // Bookings screen (BookingService.hideForRenter/hideForOwner). This is
+    // its own OR branch rather than one more status transition since it
+    // doesn't touch `status` at all.
+    // The renter's answer to the location-sharing prompt: only the renter,
+    // only while the booking is active, only the two consent fields, a
+    // valid answer, and a server-stamped time (no backdating). A decline
+    // can later become a grant; a grant is final for the booking (the
+    // renter's in-app "pause" stops sending without touching consent).
+    function isLocationConsentAnswer() {
+      return request.auth.uid == resource.data.renterId &&
+        resource.data.status == 'active' &&
+        resource.data.get('locationConsent', '') != 'granted' &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['locationConsent', 'locationConsentAt']) &&
+        request.resource.data.locationConsent in ['granted', 'declined'] &&
+        request.resource.data.locationConsentAt == request.time;
+    }
+
+    // Booking prices, checked on creation: the total must be days x the
+    // car's current daily price, and the stored platform commission (15%,
+    // see PlatformPricing) and owner payout must match that total — so a
+    // modified client can't write its own price or split. Tolerances cover
+    // rounding to satang. This is display/tracking only (no payments), and
+    // the amounts are computed on the renter's device, so they are readable
+    // by anyone who can read the booking doc (see README).
+    function isValidBookingPricing(b) {
+      let car = get(/databases/$(database)/documents/cars/$(b.carId)).data;
+      return b.totalDays is int && b.totalDays >= 1 &&
+        b.pricePerDay == car.pricePerDay &&
+        b.totalPrice is number &&
+        math.abs(b.totalPrice - b.totalDays * b.pricePerDay) < 0.01 &&
+        b.commissionAmount is number && b.ownerPayout is number &&
+        math.abs(b.commissionAmount - b.totalPrice * 0.15) < 0.01 &&
+        math.abs(b.ownerPayout - (b.totalPrice - b.commissionAmount)) < 0.01;
+    }
+
+    match /bookings/{bookingId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null &&
+        request.auth.uid == request.resource.data.renterId &&
+        request.resource.data.renterId != request.resource.data.ownerId &&
+        request.resource.data.status == 'pending' &&
+        get(/databases/$(database)/documents/cars/$(request.resource.data.carId)).data.ownerId
+          == request.resource.data.ownerId &&
+        isValidBookingPricing(request.resource.data);
+      allow update: if request.auth != null && (
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']) && (
+          (request.auth.uid == resource.data.ownerId && resource.data.status == 'pending' &&
+            request.resource.data.status in ['confirmed', 'rejected']) ||
+          (request.auth.uid == resource.data.ownerId && resource.data.status == 'confirmed' &&
+            request.resource.data.status == 'active') ||
+          (request.auth.uid == resource.data.renterId && resource.data.status == 'active' &&
+            request.resource.data.status == 'return_requested') ||
+          (request.auth.uid == resource.data.ownerId &&
+            resource.data.status in ['active', 'return_requested'] &&
+            request.resource.data.status == 'completed') ||
+          (request.auth.uid == resource.data.renterId &&
+            resource.data.status in ['pending', 'confirmed'] &&
+            request.resource.data.status == 'cancelled')
+        )) ||
+        (resource.data.status in ['cancelled', 'rejected', 'completed'] && (
+          (request.auth.uid == resource.data.renterId &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['hiddenForRenter'])) ||
+          (request.auth.uid == resource.data.ownerId &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['hiddenForOwner']))
+        )) ||
+        isLocationConsentAnswer()
+      );
+      allow delete: if false;
+    }
+
+    // Live location for an active rental: ONE document per booking
+    // (id = bookingId), overwritten on every update, so only the latest
+    // position ever exists — no history.
+    //   write:  the booking's renter, while it's `active`, and only after
+    //           they granted consent (`locationConsent == 'granted'`).
+    //   read:   ONLY the booking's owner, and only while it's `active` —
+    //           not the renter, not anyone else, not before or after.
+    //   delete: either party, but only in a write that leaves the booking
+    //           not `active` (`getAfter` sees the batch's end state) — i.e.
+    //           alongside requestReturn/completeRental's status change.
+    // Every check reads the booking itself, never the location doc's copy
+    // of ownerId/renterId, so a stale or forged copy can't widen access.
+    // `list` is denied: there's no reason to query across bookings.
+    match /bookingLocations/{bookingId} {
+      allow get: if request.auth != null &&
+        bookingDoc(bookingId).ownerId == request.auth.uid &&
+        bookingDoc(bookingId).status == 'active';
+      allow list: if false;
+      allow create, update: if request.auth != null &&
+        bookingDoc(bookingId).renterId == request.auth.uid &&
+        bookingDoc(bookingId).status == 'active' &&
+        bookingDoc(bookingId).get('locationConsent', '') == 'granted' &&
+        request.resource.data.keys().hasOnly(['ownerId', 'renterId', 'lat', 'lng', 'accuracyM', 'updatedAt']) &&
+        request.resource.data.keys().hasAll(['ownerId', 'renterId', 'lat', 'lng', 'accuracyM', 'updatedAt']) &&
+        request.resource.data.renterId == request.auth.uid &&
+        request.resource.data.ownerId == bookingDoc(bookingId).ownerId &&
+        request.resource.data.lat is number && request.resource.data.lat >= -90 && request.resource.data.lat <= 90 &&
+        request.resource.data.lng is number && request.resource.data.lng >= -180 && request.resource.data.lng <= 180 &&
+        request.resource.data.accuracyM is number && request.resource.data.accuracyM >= 0 &&
+        request.resource.data.updatedAt == request.time;
+      allow delete: if request.auth != null &&
+        request.auth.uid in [bookingDoc(bookingId).renterId, bookingDoc(bookingId).ownerId] &&
+        getAfter(/databases/$(database)/documents/bookings/$(bookingId)).data.status != 'active';
+    }
+
+    // One review per completed booking (Section 21), keyed by the booking
+    // id itself so a duplicate submission hits `allow update: if false`
+    // below instead of writing a second review — see ReviewModel. Only
+    // the renter named on that (now-completed) booking may create it, and
+    // only for the exact car/owner/renter the booking recorded. Reviews are
+    // immutable once posted (no update/delete) so the `rating`/`reviewCount`
+    // aggregates it fed into never drift out of sync with a later edit.
+    match /reviews/{bookingId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null &&
+        request.auth.uid == request.resource.data.renterId &&
+        request.resource.data.rating >= 1 && request.resource.data.rating <= 5 &&
+        bookingDoc(bookingId).status == 'completed' &&
+        bookingDoc(bookingId).renterId == request.resource.data.renterId &&
+        bookingDoc(bookingId).carId == request.resource.data.carId &&
+        bookingDoc(bookingId).ownerId == request.resource.data.ownerId;
+      allow update, delete: if false;
+    }
+
+    // Phase 9: notifications are written by the app itself right after the
+    // event they announce (booking accepted, new review, etc.) — always on
+    // behalf of *someone else*, so "only the recipient can write their own"
+    // doesn't apply here the way it does for `favorites`. Any signed-in
+    // user may create one for any `userId` (there's no server trigger to
+    // hand this to instead — no Cloud Functions/Blaze, see README), but
+    // only the recipient may read it, and the only update ever made is the
+    // recipient marking their own notification read/unread.
+    match /notifications/{notificationId} {
+      allow read: if request.auth != null && request.auth.uid == resource.data.userId;
+      allow create: if request.auth != null &&
+        request.resource.data.type in [
+          'booking_request', 'booking_accepted', 'booking_rejected',
+          'booking_cancelled', 'return_requested', 'rental_completed', 'new_review'
+        ];
+      allow update: if request.auth != null && request.auth.uid == resource.data.userId &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+      allow delete: if false;
+    }
+
+    // Photo feed: any signed-in user can read every post, but may only
+    // create one as themselves, with exactly the fields PostService writes
+    // and a server-stamped `createdAt` (so nobody can backdate a post to
+    // pin it at the top, or future-date it). Posts are immutable; only the
+    // author may delete theirs. The image URL isn't pinned to one host on
+    // purpose, so swapping the upload provider needs no rules change.
+    match /posts/{postId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null &&
+        request.resource.data.authorId == request.auth.uid &&
+        request.resource.data.keys().hasOnly([
+          'authorId', 'authorName', 'authorPhoto', 'imageUrl', 'width', 'height', 'caption', 'createdAt'
+        ]) &&
+        request.resource.data.imageUrl is string &&
+        request.resource.data.imageUrl.matches('https://.+') &&
+        request.resource.data.caption is string &&
+        request.resource.data.caption.size() <= 500 &&
+        request.resource.data.createdAt == request.time;
+      allow update: if false;
+      allow delete: if request.auth != null && request.auth.uid == resource.data.authorId;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

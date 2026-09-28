@@ -1,0 +1,182 @@
+name: car_rent
+description: "CarRent — a peer-to-peer car rental marketplace app."
+# The following line prevents the package from being accidentally published to
+# pub.dev using `flutter pub publish`. This is preferred for private packages.
+publish_to: 'none' # Remove this line if you wish to publish to pub.dev
+
+# The following defines the version and build number for your application.
+# A version number is three numbers separated by dots, like 1.2.43
+# followed by an optional build number separated by a +.
+# Both the version and the builder number may be overridden in flutter
+# build by specifying --build-name and --build-number, respectively.
+# In Android, build-name is used as versionName while build-number used as versionCode.
+# Read more about Android versioning at https://developer.android.com/studio/publish/versioning
+# In iOS, build-name is used as CFBundleShortVersionString while build-number is used as CFBundleVersion.
+# Read more about iOS versioning at
+# https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
+# In Windows, build-name is used as the major, minor, and patch parts
+# of the product and file versions while build-number is used as the build suffix.
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.12.2
+
+# Dependencies specify other packages that your package needs in order to work.
+# To automatically upgrade your package dependencies to the latest versions
+# consider running `flutter pub upgrade --major-versions`. Alternatively,
+# dependencies can be manually updated by changing the version numbers below to
+# the latest version available on pub.dev. To see which dependencies have newer
+# versions available, run `flutter pub outdated`.
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # The following adds the Cupertino Icons font to your application.
+  # Use with the CupertinoIcons class for iOS style icons.
+  cupertino_icons: ^1.0.8
+
+  # --- Phase 1: project setup ---
+  # Navigation: declarative routing with a bottom-nav shell + nested routes
+  # (auth stack, car details, etc.). Chosen over raw Navigator for the
+  # deep-linkable, multi-flow structure this app needs from Phase 2 onward.
+  go_router: ^16.2.4
+  # State management: simplest clean option explicitly allowed by the spec.
+  provider: ^6.1.5
+  # Typography: Plus Jakarta Sans, the app's single font family everywhere (see
+  # AppTextStyles). The actual bytes are bundled locally (see the `fonts:`
+  # section below + GoogleFonts.config.allowRuntimeFetching in main.dart)
+  # rather than left to the package's default runtime CDN fetch, so the
+  # brand typeface is guaranteed to be there from frame one, offline or on.
+  google_fonts: ^6.3.0
+  # Backend: Firebase is the app's only backend. Added now so the project
+  # structure is ready; Firebase.initializeApp() is guarded until a real
+  # Firebase project is connected (see Phase 1 notes).
+  firebase_core: ^4.1.1
+
+  # --- Phase 2: authentication ---
+  firebase_auth: ^6.1.1
+  cloud_firestore: ^6.1.1
+  image_picker: ^1.1.2
+  # Image hosting: the project stays on the free Firebase Spark plan, and
+  # Firebase Storage now requires the paid Blaze plan even for free-tier
+  # quota — so image uploads (profile photo now, car photos in Phase 4) go
+  # to Cloudinary's free tier instead, via plain HTTP multipart upload.
+  http: ^1.2.2
+
+  # --- Phase 3: car marketplace ---
+  # Currency formatting for prices now; date formatting for bookings later.
+  intl: ^0.20.2
+
+  # --- Phase 4: post car ---
+  # Pickup location capture without Google Maps: Maps Platform requires a
+  # billing-enabled Google Cloud project (see README), so until Phase 7,
+  # "Pickup Location" uses the device's own GPS (geolocator) and the OS's
+  # built-in geocoder (geocoding — native Android/iOS APIs, no API key or
+  # billing involved) to fill in coordinates + a readable address.
+  geolocator: ^14.0.1
+  geocoding: ^4.0.0
+
+  # --- Phase 7: maps & GPS tracking ---
+  # Google Maps Platform requires a billing-enabled Google Cloud project;
+  # the user opted to stay off it (same reasoning as skipping Firebase
+  # Storage). flutter_map + OpenStreetMap tiles gives the same interactive
+  # map/marker experience with no billing or API key required.
+  flutter_map: ^8.3.2
+  latlong2: ^0.9.1
+
+  # --- Phase 10: polishing ---
+  # Disk-caches network images (car photos, avatars) instead of refetching
+  # them every time a card scrolls back into view — noticeable win once the
+  # catalog has more than a couple of cars, flagged as a "revisit later" in
+  # Phase 3.
+  cached_network_image: ^3.4.1
+
+  # --- Onboarding ---
+  # Persists a single "has the intro carousel been seen" flag on-device so
+  # it only ever shows once per install, ahead of the login/register flow.
+  shared_preferences: ^2.3.3
+
+  # --- Help & Support ---
+  # Opens the device's mail/phone apps for "Email us" / "Call us" contact
+  # rows, and external links (FAQ/help center) in the system browser.
+  url_launcher: ^6.3.1
+
+  # --- Image editing ---
+  # Native crop UI (uCrop on Android, TOCropViewController on iOS) shown
+  # right after image_picker returns a photo, for every picker in the app
+  # (profile photo on register/edit-profile, car listing photos) — so users
+  # can crop/straighten before it uploads instead of using whatever the
+  # camera/gallery handed back as-is.
+  image_cropper: ^12.2.1
+
+  # --- Bookings list ---
+  # Swipe-to-reveal delete action for settled bookings: sliding a card only
+  # exposes a Delete button behind it (nothing is removed yet); the booking
+  # is hidden from the list only once that button is tapped and confirmed.
+  flutter_slidable: ^4.0.3
+
+  # --- UX/UI polish pass ---
+  # Declarative entrance/press/shimmer animations (fade, slide, scale,
+  # shimmer) used everywhere via the `.animate()` extension instead of a
+  # bespoke AnimationController per widget — keeps ~30 screens' worth of
+  # motion consistent and cheap to maintain.
+  flutter_animate: ^4.5.2
+  # Real interactive 3D model (rotate/pinch-zoom) for the Car Details
+  # "3D Preview" showroom toggle — embeds Google's <model-viewer> web
+  # component in a WebView. Android/iOS/web only (no Windows/macOS/Linux),
+  # which matches this app's actual target platforms.
+  model_viewer_plus: ^1.9.3
+
+  # --- Photo posts (image editor + feed) ---
+  # Pure-Dart decode/resize/encode, so the editor's brightness/contrast/
+  # filter/rotate edits can be baked into the pixels and the result
+  # compressed before upload — same code on Android, iOS and web, run in a
+  # background isolate so large photos don't jank the UI.
+  image: ^4.10.1
+  web: 1.1.1
+  lucide_icons_flutter: ^3.1.20
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  # The "flutter_lints" package below contains a set of recommended lints to
+  # encourage good coding practices. The lint set provided by the package is
+  # activated in the `analysis_options.yaml` file located at the root of your
+  # package. See that file for information about deactivating specific lint
+  # rules and activating additional ones.
+  flutter_lints: ^6.0.0
+
+# For information on the generic Dart part of this file, see the
+# following page: https://dart.dev/tools/pub/pubspec
+
+# The following section is specific to Flutter packages.
+flutter:
+
+  # The following line ensures that the Material Icons font is
+  # included with your application, so that you can use the icons in
+  # the material Icons class.
+  uses-material-design: true
+
+  # Plus Jakarta Sans — the app's single font family (the "Obsidian
+  # Velocity" design system; see AppTextStyles). Declared under the exact
+  # family name `GoogleFonts.plusJakartaSans()` uses so Flutter resolves it
+  # from these bundled files instead of google_fonts reaching out to the
+  # network; see GoogleFonts.config.allowRuntimeFetching in main.dart.
+  # OFL-licensed (assets/fonts/PlusJakartaSans/OFL.txt); static per-weight
+  # instances from the official tokotype/PlusJakartaSans release.
+  fonts:
+    - family: Plus Jakarta Sans
+      fonts:
+        - asset: assets/fonts/PlusJakartaSans/PlusJakartaSans-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/PlusJakartaSans/PlusJakartaSans-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/PlusJakartaSans/PlusJakartaSans-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/PlusJakartaSans/PlusJakartaSans-Bold.ttf
+          weight: 700
+        - asset: assets/fonts/PlusJakartaSans/PlusJakartaSans-ExtraBold.ttf
+          weight: 800
+  # For details regarding fonts from package dependencies,
+  # see https://flutter.dev/to/font-from-package

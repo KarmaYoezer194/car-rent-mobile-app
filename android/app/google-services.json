@@ -1,0 +1,82 @@
+{
+  "project_info": {
+    "project_number": "466599350064",
+    "project_id": "carrent-app-86916",
+    "storage_bucket": "carrent-app-86916.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:466599350064:android:a331c573dd5b788bfc42f5",
+        "android_client_info": {
+          "package_name": "com.rentalcar.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "466599350064-etksioibndh0tv3hs3ll8r1lg4j8uncq.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAqmRo1NF-ErdjUm_tkzG_EE0j8faKC79Y"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "466599350064-etksioibndh0tv3hs3ll8r1lg4j8uncq.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "466599350064-grlqdoo4s7k16o5sg7si9bbo6kovnibi.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.rentalcar.app"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:466599350064:android:34994abb5f6473f0fc42f5",
+        "android_client_info": {
+          "package_name": "com.rentalcar.car_rent"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "466599350064-etksioibndh0tv3hs3ll8r1lg4j8uncq.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAqmRo1NF-ErdjUm_tkzG_EE0j8faKC79Y"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "466599350064-etksioibndh0tv3hs3ll8r1lg4j8uncq.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "466599350064-grlqdoo4s7k16o5sg7si9bbo6kovnibi.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.rentalcar.app"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
