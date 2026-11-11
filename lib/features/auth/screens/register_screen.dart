@@ -1,9 +1,6 @@
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
@@ -13,7 +10,6 @@ import '../../../core/services/auth_service.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../../core/utils/app_snackbar.dart';
 import '../../../core/utils/formatters.dart';
-import '../../../core/utils/image_crop.dart';
 import '../../../core/widgets/motion/entrance.dart';
 import '../../../widgets/brand_accents.dart';
 import '../../../widgets/brand_header.dart';
@@ -36,11 +32,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
 
-  // Read once at pick time (via XFile.readAsBytes(), which works on web,
-  // mobile, and desktop alike) rather than keeping a `dart:io File` around —
-  // File isn't supported on Flutter Web.
-  Uint8List? _profileImageBytes;
-  String _profileImageFilename = 'profile.jpg';
   bool _obscurePassword = true;
   bool _isLoading = false;
 
@@ -54,24 +45,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
     super.dispose();
   }
 
-  Future<void> _pickProfileImage() async {
-    try {
-      final picked = await pickAndCropImage(
-        context: context,
-        source: ImageSource.gallery,
-        circleCrop: true,
-        title: 'Crop Profile Photo',
-      );
-      if (picked == null) return;
-      setState(() {
-        _profileImageBytes = picked.bytes;
-        _profileImageFilename = picked.filename;
-      });
-    } catch (e) {
-      if (mounted) AppSnackbar.show(context, "Couldn't open your photo library.");
-    }
-  }
-
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -83,8 +56,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
         email: _emailController.text.trim(),
         password: _passwordController.text,
         phone: _phoneController.text.trim(),
-        profileImageBytes: _profileImageBytes,
-        profileImageFilename: _profileImageFilename,
       );
       // Router redirect (driven by authStateChanges) takes it from here.
     } catch (e) {
@@ -138,34 +109,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         child: Text(
                           'Rent cars nearby or list your own — it only takes a minute.',
                           style: AppTextStyles.bodyMedium.copyWith(color: AppColors.textSecondary),
-                        ),
-                      ),
-                      const SizedBox(height: AppSpacing.lg),
-                      Entrance(
-                        delay: 120.ms,
-                        child: Row(
-                          children: [
-                            _ProfileImagePicker(imageBytes: _profileImageBytes, onTap: _pickProfileImage),
-                            const SizedBox(width: AppSpacing.lg),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    _profileImageBytes == null ? 'Add a profile photo' : 'Looking good!',
-                                    style: AppTextStyles.titleMedium.copyWith(fontWeight: FontWeight.w700),
-                                  ),
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    _profileImageBytes == null
-                                        ? 'Optional — helps hosts and renters recognise you.'
-                                        : 'Tap the photo to change it.',
-                                    style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
                         ),
                       ),
                       const SizedBox(height: AppSpacing.lg),
@@ -270,60 +213,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     ],
                   ),
                 ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Profile photo picker in an amber ring, with a camera badge.
-class _ProfileImagePicker extends StatelessWidget {
-  const _ProfileImagePicker({required this.imageBytes, required this.onTap});
-
-  final Uint8List? imageBytes;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      button: true,
-      label: imageBytes == null ? 'Add profile photo' : 'Change profile photo',
-      child: GestureDetector(
-        onTap: onTap,
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(2.5),
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: LinearGradient(colors: [AppColors.secondary, AppColors.primary]),
-              ),
-              child: Container(
-                padding: const EdgeInsets.all(2),
-                decoration: BoxDecoration(shape: BoxShape.circle, color: AppColors.background),
-                child: CircleAvatar(
-                  radius: 34,
-                  backgroundColor: AppColors.surfaceElevated,
-                  backgroundImage: imageBytes != null ? MemoryImage(imageBytes!) : null,
-                  child: imageBytes == null ? Icon(LucideIcons.user, color: AppColors.textSecondary, size: 34) : null,
-                ),
-              ),
-            ),
-            Positioned(
-              right: -2,
-              bottom: -2,
-              child: Container(
-                padding: const EdgeInsets.all(6),
-                decoration: BoxDecoration(
-                  color: AppColors.primary,
-                  shape: BoxShape.circle,
-                  border: Border.all(color: AppColors.background, width: 2),
-                ),
-                child: Icon(LucideIcons.camera, color: AppColors.onPrimary, size: 14),
               ),
             ),
           ],
